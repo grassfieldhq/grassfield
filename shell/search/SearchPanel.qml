@@ -331,7 +331,9 @@ Variants {
         // The row's right side, level with its top (the Actions list hangs there, spec §3.3).
         function placeActions(): void {
             const rowItem = list.itemAtIndex(root.controller.selected);
-            win.actionsAt = rowItem ? rowItem.mapToItem(win.contentItem, rowItem.width + Tokens.searchActionsGap, 0) : Qt.point(panel.x + panel.width + Tokens.searchActionsGap, panel.y);
+            // Anchored to the results panel's edge (the row is inset inside it), level with the row's top.
+            const top = rowItem ? rowItem.mapToItem(win.contentItem, 0, 0).y : panel.y;
+            win.actionsAt = Qt.point(panel.mapToItem(win.contentItem, panel.width, 0).x + Tokens.searchActionsGap, top);
             win.actionsPlaced = true;
         }
 
@@ -577,7 +579,9 @@ Variants {
                             c.hide();
                         break;
                     default:
-                        event.accepted = false;
+                        // A Super or Alt chord the palette does not handle is not text ("Super+K" must not type a "k");
+                        // Ctrl keeps the field's own editing keys (Ctrl+A, Ctrl+C, Ctrl+V, ...).
+                        event.accepted = (event.modifiers & (Qt.MetaModifier | Qt.AltModifier)) !== 0;
                     }
                 }
 
@@ -658,7 +662,7 @@ Variants {
             readonly property string clipStatus: win.clipView ? win.clipStatusText() : ""
             readonly property bool prompt: win.clipView && root.controller.clipPrompt
             readonly property bool notice: noResults || clipStatus !== ""
-            readonly property bool footer: win.clipView && root.controller.clipNotice !== "" && hasResults
+            readonly property bool footer: root.controller.clipNotice !== "" && hasResults
             readonly property real listTop: chipBlock + Tokens.spacingSm
             // Nothing to show under the capsule: no panel at all (an empty query without chips or recents).
             readonly property bool used: chipsShown || hasResults || notice || prompt
@@ -845,7 +849,18 @@ Variants {
                 model: root.controller.rowModel
                 currentIndex: root.controller.selected
                 onCurrentIndexChanged: {
-                    if (currentIndex >= 0)
+                    if (currentIndex < 0)
+                        return;
+                    const jump = root.controller.groupJump;
+                    root.controller.groupJump = false;
+                    if ((currentIndex + 1) * Tokens.searchRowHeight <= height)
+                        // The row is in the first screenful (Top Hit and the first group included): show the top, so a move
+                        // between groups never scrolls the Top Hit row out of view.
+                        positionViewAtBeginning();
+                    else if (jump)
+                        // Page Down / Page Up: the group's first row goes to the top, the group is seen from its start.
+                        positionViewAtIndex(currentIndex, ListView.Beginning);
+                    else
                         positionViewAtIndex(currentIndex, ListView.Contain);
                 }
 
@@ -1097,11 +1112,44 @@ Variants {
                 x: Tokens.searchFieldInset
                 y: panel.height - height - Tokens.spacingSm
                 width: panel.width - 2 * Tokens.searchFieldInset
-                height: Tokens.searchClipButtonSize
+                // Two lines at most (the French refusal is longer than one); the footer grows with the text, whole pixels.
+                height: Math.max(Tokens.searchClipButtonSize, Math.ceil(contentHeight))
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 textFormat: Text.PlainText
                 text: root.controller.clipNotice
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
+                // Said in the dev status so that the nested test proves the whole notice shows. Only the screen Search is shown on
+                // writes it (a hidden panel of another screen lays the text out at a stale width).
+                readonly property bool cut: win.shown && visible && truncated
+                onCutChanged: if (win.shown || !root.controller.open)
+                    root.controller.noticeTruncated = cut
+                // The painted text's rectangle in the window (logical px): the footer centres its lines in its own box.
+                readonly property rect paintRect: {
+                    // mapToItem does not track movement: the geometry it depends on is read here so the binding re-runs.
+                    const deps = [x, y, width, height, panel.x, panel.y, panel.width, panel.height, win.width, win.height, capsule.y, capsule.height];
+                    const p = footerText.mapToItem(win.contentItem, (width - contentWidth) / 2, (height - contentHeight) / 2 + (deps.length > 0 ? 0 : 1));
+                    return Qt.rect(p.x, p.y, contentWidth, contentHeight);
+                }
+                // Shown on this screen: the panel is shown and opaque, the footer is visible with opacity and text, and its text
+                // rectangle starts inside the panel and lies inside the window (the footer is laid out below the list, so those are
+                // the bounds that can fail). It is state only: the nested test proves the drawing from the pixels of noticeRect.
+                readonly property bool drawn: {
+                    if (!win.shown || !panel.visible || panel.opacity <= 0 || !visible || opacity <= 0 || text === "" || contentWidth <= 0)
+                        return false;
+                    // (mapToItem does not track movement: the panel's own x and y are read so the binding re-runs with them)
+                    const pr = panel.mapToItem(win.contentItem, 0, 0 * (panel.x + panel.y));
+                    const r = paintRect;
+                    const inWindow = r.x >= 0 && r.y >= 0 && r.x + r.width <= win.width && r.y + r.height <= win.height;
+                    return inWindow && r.x >= pr.x && r.y >= pr.y;
+                }
+                onPaintRectChanged: if (drawn && win.shown)
+                    root.controller.noticeRect = ({x: paintRect.x, y: paintRect.y, w: paintRect.width, h: paintRect.height})
+                onDrawnChanged: if (win.shown || !root.controller.open) {
+                    root.controller.noticeShown = drawn;
+                    root.controller.noticeRect = drawn ? ({x: paintRect.x, y: paintRect.y, w: paintRect.width, h: paintRect.height}) : null;
+                }
                 color: Appearance.colors.textSecondary
                 font.family: Appearance.fontFamily
                 font.pixelSize: Tokens.searchSubtitleSize
@@ -1230,8 +1278,10 @@ Variants {
             readonly property point placed: MenuPlace.place(win.actionsAt, {w: width, h: height}, {w: win.width, h: win.height}, Tokens.panelPopupMargin)
 
             z: 901
-            x: placed.x
-            y: placed.y
+            // Whole device pixels (the panel is on the 1.25 grid like its width: an 11 px gap is 13.75 device px)
+            readonly property real dpr: Math.max(1, win.devicePixelRatio)
+            x: Math.round(placed.x * dpr) / dpr
+            y: Math.round(placed.y * dpr) / dpr
             width: (item as Item)?.width ?? 0
             height: (item as Item)?.height ?? 0
             active: win.actionsPlaced
@@ -1309,6 +1359,7 @@ Variants {
                     focus: !box.filtered
                     model: box.visibleActions
                     accessibleName: qsTr("Actions")
+                    minimumWidth: Tokens.searchActionsMinWidth
                     onActivated: item => root.controller.runAction(item.id)
                     onCloseRequested: root.controller.closeActions()
                 }

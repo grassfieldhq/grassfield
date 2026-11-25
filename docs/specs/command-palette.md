@@ -248,6 +248,13 @@ menu. The kind-specific actions of P4 to P7 (Open With, Copy Path, Quit, favorit
   (Copy, Paste, Copy Expression), clipboard (unchanged: CB-8 menu), menu item (Choose), model answer (Copy, Paste, Ask
   Follow-up, New Conversation).
 
+Status (nested L1 fixes, 2026-11-24): the list hangs `search.actionsGap` (11) right of the **results panel's** edge, level with the selected
+row's top, and is at least `search.actionsMinWidth` (220) wide; its shortcut texts are translated key names ("Entrée", "Ctrl+Entrée") drawn
+through `MenuShortcut.label` (words on a PC, symbols in the Mac style, like every menu); its highlight is the menus' accent fill. Return on a script
+row keeps Search open and says why under the rows until the runner is connected (`Scripts.failureText`: not connected, refused 70,
+sandbox missing 71, failed code). Commands match without punctuation, no-break spaces as spaces; the variants of a command keep their order in every
+language (the localized name is a keyword of each); Page Up/Down scroll to the group's start and the first screenful shows the top.
+
 ### 3.4 Layout, glass and tokens (ADR-0024; master-prompt §5.5)
 - The capsule and panel are unchanged (search.md: 520 wide, rows 63, Inter 17/15). The detail pane takes the clipboard
   preview's place and width (tokens `search.detail*` derived from the existing `search.clipPreview*` and `search.clipPage*`), so the window grows the way

@@ -45,6 +45,14 @@ TestCase {
         compare(Actions.forItem({kind: "app"}, null).length, 0);
     }
 
+    // The shortcut texts come translated (French "Entrée", "Ctrl+Entrée"), like every menu shortcut; MenuShortcut draws them.
+    function test_shortcutTextsAreTheTranslatedOnes() {
+        const fr = Object.assign({keyReturn: "Entrée", keyCtrlReturn: "Ctrl+Entrée"}, words);
+        const list = Actions.forItem({kind: "file"}, fr);
+        compare(list[0].shortcut, "Entrée");
+        compare(list[1].shortcut, "Ctrl+Entrée");
+    }
+
     function test_primaryAndSecondaryShortcuts() {
         const f = Actions.forItem({kind: "file"}, words);
         compare(f[0].shortcut, "Return");

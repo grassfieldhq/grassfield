@@ -21,6 +21,15 @@ TestCase {
         return {v: 1, folders: [{path: "/f", status: status || "ok", scripts: files}]};
     }
 
+    function test_failureText() {
+        const t = {notRun: "not run", refused: "refused", noSandbox: "no sandbox", failed: "failed (%1)"};
+        compare(Scripts.failureText(-1, t), "not run");
+        compare(Scripts.failureText(undefined, t), "not run");
+        compare(Scripts.failureText(70, t), "refused");
+        compare(Scripts.failureText(71, t), "no sandbox");
+        compare(Scripts.failureText(2, t), "failed (2)");
+    }
+
     function test_folders() {
         compare(Scripts.folders([], "/home/u", "/home/u/.local/share").join("|"), "/home/u/.local/share/grassfield/script-commands");
         compare(Scripts.folders(["~/Scripts", "/opt/s/", "~/Scripts"], "/home/u/", "/home/u/.local/share/").join("|"),

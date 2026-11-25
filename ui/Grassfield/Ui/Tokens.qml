@@ -1165,8 +1165,10 @@ QtObject {
     readonly property int searchClipPreviewTextSize: Math.round(14 * Appearance.textScale)
     // estimate: the first-use prompt's margins inside the results panel (CB-6, macOS 26.0 capture W-36) [ref: docs/specs/clipboard.md; ADR-0034]
     readonly property int searchClipPromptPadding: 24
-    // estimate: the Actions list to the right edge of the selected row, the capsule-to-panel gap (search.capsuleGap) [ref: docs/specs/command-palette.md § 3.3 Actions panel; ADR-0067 D-1]
+    // estimate: the Actions list to the right edge of the results panel, the capsule-to-panel gap (search.capsuleGap) [ref: docs/specs/command-palette.md § 3.3 Actions panel; ADR-0067 D-1]
     readonly property int searchActionsGap: 11
+    // estimate: the Actions list never narrower than this, so a single action is not a sliver beside the results (nested L1 2026-11-24: 149 px) [ref: docs/specs/command-palette.md § 3.3 Actions panel; ADR-0067 D-1]
+    readonly property int searchActionsMinWidth: 220
 
     // estimate of macOS 27's compact Character Viewer popover (Control-Command-Space; no capture of it in design/reference yet, F1 pending): nine glyphs to a row [ref: docs/specs/clipboard.md § Emoji & Symbols]
     readonly property int emojiColumns: 9

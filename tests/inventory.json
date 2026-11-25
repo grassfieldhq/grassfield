@@ -803,6 +803,7 @@
  {"path": "tests/visual/flow-preview.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/flow-quicksettings.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/flow-search.sh", "layer": "nested", "runner": "bare"},
+ {"path": "tests/visual/palette.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/flow-settings.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/flow-inputsource.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/flow-widgets.sh", "layer": "nested", "runner": "bare"},

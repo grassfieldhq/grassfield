@@ -209,6 +209,30 @@ TestCase {
         compare(Commands.match(r, "wifi")[0].cmd.id, "set.wifi");
     }
 
+    // The order of a command's variants does not depend on the language: a language whose titles START with the name ("Ne pas
+    // déranger jusqu'à demain") ranks the toggle first like English does, because the localized name is a keyword of all three.
+    function test_dndVariantsKeepTheirOrderInEveryLanguage() {
+        // The words BuiltinCommands.qml hands over: the localized name (dndName) and the other keywords, not the name in dndWords.
+        const en = reg(Builtin.toggleCommands(words({dndName: "do not disturb", dndWords: ["focus"]}), togState(), togAct(), refuses));
+        compare(Commands.match(en, "do not disturb")[0].cmd.id, "set.dnd");
+        const fr = words({dndTurnOn: "Activer Ne pas déranger", dndTurnOff: "Désactiver Ne pas déranger", dndHour: "Ne pas déranger pendant 1 heure",
+            dndTomorrow: "Ne pas déranger jusqu’à demain", dndName: "ne pas déranger", dndWords: ["concentration"]});
+        const r = reg(Builtin.toggleCommands(fr, togState(), togAct(), refuses));
+        const ids = Commands.match(r, "ne pas déranger").map(h => h.cmd.id);
+        compare(ids.slice(0, 3), ["set.dnd", "set.dnd.hour", "set.dnd.tomorrow"]);
+    }
+
+    // The query and the title are compared without punctuation, and a no-break space is a space.
+    function test_windowCommandsMatchWithoutPunctuationAndNbsp() {
+        const r = reg(Builtin.windowCommands(words(), ctx(), winAct(), refuses));
+        for (const w of ["move window left", "move window: left", "Move  Window:Left", "window left"])
+            verify(Commands.match(r, w).some(h => h.cmd.title === "Move Window: Left"), w);
+        const fr = words({tileFmt: "Déplacer la fenêtre : %1", tileWord: "fenêtre", places: Object.assign({}, places, {left: "À gauche"})});
+        const r2 = reg(Builtin.windowCommands(fr, ctx(), winAct(), refuses));
+        verify(Commands.match(r2, "deplacer la fenetre a gauche").some(h => h.cmd.title.indexOf("gauche") >= 0));
+        verify(Commands.match(r2, "déplacer la fenêtre : à gauche").some(h => h.cmd.title.indexOf("gauche") >= 0));
+    }
+
     function test_togglesCallTheControlCenterFunctionsWithTheOppositeState() {
         const r = reg(Builtin.toggleCommands(words(), togState(), togAct(), refuses));
         for (const id of ["set.wifi", "set.bluetooth", "set.airplane", "set.dnd", "set.dnd.hour", "set.dnd.tomorrow", "set.nightlight"])

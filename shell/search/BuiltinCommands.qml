@@ -86,7 +86,7 @@ Scope {
             airplaneTurnOn: qsTr("Turn Airplane Mode On"), airplaneTurnOff: qsTr("Turn Airplane Mode Off"), airplaneWords: [qsTr("flight mode"), qsTr("radios")],
             dndTurnOn: qsTr("Turn Do Not Disturb On"), dndTurnOff: qsTr("Turn Do Not Disturb Off"),
             dndHour: qsTr("Do Not Disturb for 1 Hour"), dndTomorrow: qsTr("Do Not Disturb Until Tomorrow"),
-            dndWords: [qsTr("focus"), qsTr("silence"), qsTr("notifications")],
+            dndName: qsTr("do not disturb"), dndWords: [qsTr("focus"), qsTr("silence"), qsTr("notifications")],
             nightLightTurnOn: qsTr("Turn Night Light On"), nightLightTurnOff: qsTr("Turn Night Light Off"), nightLightWords: [qsTr("warm colors"), qsTr("blue light")]
         };
         const refuses = () => SessionState.refuses("search");
