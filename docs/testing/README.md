@@ -133,7 +133,9 @@ with the runner's defaults only (no container option, device or host mount: the 
 2. `ci.sh toolkit` (root): the audit's toolchain, pinned by sha256 (`ci.sh pins`): the Hyprland 0.56.2 stack from the Arch
    archive of 2026-10-20 (hyprland 0.56.2-4, aquamarine 0.15.1-1, hyprgraphics 0.5.1-4, hyprutils 0.14.2-1, hyprtoolkit 0.6.0-1 and hyprland-guiutils 0.2.2-4, whose
    rolling builds moved to the next aquamarine and hyprgraphics sonames, `pacman -Udd`), and Omarchy's own Quickshell 0.3.2.r7 (`pkgs.omarchy.org/stable`), then held with
-   `IgnorePkg`. Qt and KF6 are current Arch. The stack is linked against libjxl.so.0.12 and current Arch ships 0.13 (ffmpeg,
+   `IgnorePkg`. Qt is pinned at the owner's 6.12.0 (the twelve Qt 6 modules an Omarchy 4.5 machine runs, from the archive's
+   `/packages`): Quickshell uses Qt's private API of exactly one Qt version, and Arch's 6.12.1 left it unloadable. KF6 is current
+   Arch. The stack is linked against libjxl.so.0.12 and current Arch ships 0.13 (ffmpeg,
    glycin, opencv and webkit need it): the 0.12 shared objects of the snapshot's package are added beside the installed 0.13
    (`ci.sh compat`, sha256 checked), not instead of it. The step compares the unresolved libraries (`ldd`) of every ELF under
    `/usr/bin`, `/usr/sbin` and `/usr/lib` before and after, and fails by name on a new one.
